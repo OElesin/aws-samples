@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  This template provisions a CFN stack containing AWS AppRunner Service for
+  serving HuggingFace Models
+Parameters:
+  PublicECRIdentifier:
+    Type: String
+    Description: AWS ECR Public Repo Identifier
+  ECRType:
+    Type: String
+    AllowedValues:
+      - ECR
+      - ECR_PUBLIC
+    Default: ECR_PUBLIC
+    Description: This reflects the repository provider and whether the repository is private or public.
+Resources:
+  HFModelServingService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: fab-romano-qna-bot
+      SourceConfiguration:
+        AutoDeploymentsEnabled: false
+        ImageRepository:
+          ImageIdentifier: !Ref PublicECRIdentifier
+          ImageRepositoryType: !Ref ECRType
+          ImageConfiguration:
+            Port: 8000
+      InstanceConfiguration:
+        Cpu: 2 vCPU
+        Memory: 4 GB
+
+Outputs:
+  InferenceService:
+    Value: !GetAtt HFModelServingService.ServiceUrl
