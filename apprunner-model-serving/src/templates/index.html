@@ -1,0 +1,97 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="">
+    <meta name="author" content="">
+    <link rel="icon" href="/static/img/myimage.png">
+
+    <title>Transfer Tracker - AI Powered QnA Bot for Football Transfer News</title>
+
+    <link rel="canonical" href="https://getbootstrap.com/docs/4.0/examples/starter-template/">
+
+    <!-- Bootstrap core CSS -->
+    <link href="https://getbootstrap.com/docs/4.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Custom styles for this template -->
+    <link href="https://getbootstrap.com/docs/4.0/examples/starter-template/starter-template.css" rel="stylesheet">
+</head>
+
+<body>
+
+<nav class="navbar navbar-expand-md navbar-dark bg-dark fixed-top">
+    <a class="navbar-brand" href="#">Navbar</a>
+    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarsExampleDefault" aria-controls="navbarsExampleDefault" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="navbarsExampleDefault">
+        <ul class="navbar-nav mr-auto">
+            <li class="nav-item active">
+                <a class="nav-link" href="#">Home <span class="sr-only">(current)</span></a>
+            </li>
+        </ul>
+    </div>
+</nav>
+
+<main role="main" class="container">
+
+    <div class="starter-template">
+        <img src="/static/img/myimage.png" width="75" height="75" class="rounded mx-auto d-block" alt="AI Powered QnA Bot for Football Transfer News">
+        <h1>Transfer Tracker</h1>
+        <p class="lead">AI Powered QnA Bot for Football Transfer News..</p>
+    </div>
+    <div class="row">
+        <div class="col-md-6 offset-md-3">
+            <form id="search-form">
+                <div class="form-row align-items-center">
+                    <div class="col-auto col-md-8">
+                        <label class="sr-only" for="inlineFormInput">Name</label>
+                        <input type="text" name="question" id="question" class="form-control form-control-lg" id="inlineFormInput" placeholder="Ask a question">
+                        <small id="emailHelp" class="form-text text-muted">Example: Where is Paul Pogba heading?</small>
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-primary mb-2 btn-lg">Search</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+</main><!-- /.container -->
+
+<!-- Bootstrap core JavaScript
+================================================== -->
+<!-- Placed at the end of the document so the pages load faster -->
+<script src="https://code.jquery.com/jquery-3.3.1.min.js" integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8=" crossorigin="anonymous"></script>
+<script src="https://getbootstrap.com/docs/4.0/assets/js/vendor/popper.min.js"></script>
+<script src="https://getbootstrap.com/docs/4.0/dist/js/bootstrap.min.js"></script>
+<script>
+    $(document).ready(function () {
+        $("#search-form").submit(function (event) {
+            const formData = {
+                text: $("#question").val()
+            };
+            console.log(JSON.stringify(formData))
+            event.preventDefault();
+
+            $.ajax({
+                type: "POST",
+                url: "/qna-response/",
+                data: JSON.stringify(formData),
+                async: true,
+                // dataType: "json",
+                contentType: "application/json",
+                // encode: true,
+            }).done(function (data) {
+                console.log(data);
+            });
+
+
+        });
+    });
+</script>
+</body>
+</html>
