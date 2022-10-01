@@ -1,0 +1,16 @@
+boto3
+aws-sam-cli
+awscli
+pandas
+numpy
+awswrangler
+jupyterlab
+notebook
+botocore
+pyathena
+redshift-connector
+requests
+scikit-learn
+scipy
+SQLAlchemy
+s3fs

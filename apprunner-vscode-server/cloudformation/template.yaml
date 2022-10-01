@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  This template provisions a CFN stack containing AWS AppRunner Service
+  running VS Code Server
+Parameters:
+  PublicECRIdentifier:
+    Type: String
+    Description: AWS ECR Public Repo Identifier
+  ECRType:
+    Type: String
+    AllowedValues:
+      - ECR
+      - ECR_PUBLIC
+    Default: ECR_PUBLIC
+    Description: This reflects the repository provider and whether the repository is private or public.
+  VSCodePassword:
+    Type: String
+    NoEcho: true
+    Description: web gui password
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: elesin-family-work-doc
+      AccessControl: Private
+
+  VSCodeServerService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: vs-code-server
+      SourceConfiguration:
+        AutoDeploymentsEnabled: false
+        ImageRepository:
+          ImageIdentifier: !Ref PublicECRIdentifier
+          ImageRepositoryType: !Ref ECRType
+          ImageConfiguration:
+            Port: 8443
+            RuntimeEnvironmentVariables:
+              - Name: TZ
+                Value: Europe/Berlin
+              - Name: PUID
+                Value: 1000
+              - Name: PGID
+                Value: 1000
+              - Name: PASSWORD
+                Value: !Ref VSCodePassword
+              - Name: S3_BUCKET_NAME
+                Value: !Ref S3Bucket
+      InstanceConfiguration:
+        Cpu: 2 vCPU
+        Memory: 4 GB
+
+Outputs:
+  InferenceService:
+    Value: !GetAtt VSCodeServerService.ServiceUrl
