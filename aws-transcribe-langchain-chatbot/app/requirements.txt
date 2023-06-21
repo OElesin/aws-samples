@@ -1,0 +1,9 @@
+boto3==1.26.129
+fastapi==0.95.1
+mangum==0.9.2
+uvicorn==0.11.8
+langchain==0.0.149
+faiss-cpu==1.7.3
+numpy==1.24.2
+gradio
+sentence_transformers

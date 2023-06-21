@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  AudioFileBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'audio-files-call-logs-${AWS::AccountId}'
+      AccessControl: Private
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  WhisperTranscribeFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      FunctionName: openai-whisper-transcribe-fxn
+      CodeUri: ./lambda_app/
+      Runtime: python3.8
+      Handler: app.lambda_handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref AudioFileBucket
+#    Metadata:
+#      Dockerfile: Dockerfile
+#      DockerContext: ./lambda_app
+#      DockerTag: python3.8-v1
+
+  GlueWhisperTranscribeETLJobRole:
+    DependsOn: AudioFileBucket
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "glue.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: "s3-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetObject
+                  - s3:GetObjectAcl
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:GetBucketLocation
+                Resource:
+                  - !GetAtt AudioFileBucket.Arn
+                  - !Sub '${AudioFileBucket.Arn}/*'
+        - PolicyName: "comprehend-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 'comprehend:*'
+                Resource: '*'
+        - PolicyName: "logs-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - "arn:aws:logs:*:*:/aws-glue/*"
+                  - "arn:aws:logs:*:*:/customlogs/*"
+              - Effect: Allow
+                Action: "cloudwatch:PutMetricData"
+                Resource: '*'
+
+  GlueWhisperTranscribeETLJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${AudioFileBucket}/script/audio-processing.py"
+      DefaultArguments:
+        "--payload": ""
+        "--bucket": !Ref AudioFileBucket
+        "--additional-python-modules": "transformers==4.19.0, git+https://github.com/openai/whisper.git"
+        "--enable-continuous-cloudwatch-log": "true"
+        "--job-bookmark-option": "job-bookmark-disable"
+        "--enable-metrics": ""
+        "--enable-job-insights": "true"
+      ExecutionProperty:
+        MaxConcurrentRuns: 2
+      MaxRetries: 0
+      Name: audio-transcriber-etl
+      Role: !Ref GlueWhisperTranscribeETLJobRole
+      GlueVersion: 3.0
+      WorkerType: G.2X
+      ExecutionClass: FLEX
+      Timeout: 120
+      NumberOfWorkers: 2
+
+  WorkflowExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: WhisperETLStateMachineExecRole
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchEventsFullAccess
+      Policies:
+        - PolicyName: "glue-job-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartJobRun
+                  - glue:BatchStopJobRun
+                  - glue:BatchGetJobs
+                  - glue:GetJob
+                  - glue:GetJobBookmark
+                  - glue:GetJobRun
+                  - glue:GetJobRuns
+                  - glue:GetJobs
+                  - glue:GetTags
+                  - glue:ListJobs
+                  - glue:UpdateJob
+                Resource:
+                  - !Sub 'arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${GlueWhisperTranscribeETLJob}'
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt WhisperTranscribeFunction.Arn
+
+  WhisperETLStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Definition:
+        StartAt: WhisperTranscribeLambdaFxn
+        States:
+#          GlueWhisperTranscribeETLJob:
+#            Type: Task
+#            Resource: arn:aws:states:::glue:startJobRun.sync
+#            Parameters:
+#              JobName: !Ref GlueWhisperTranscribeETLJob
+#              Arguments:
+#                "--payload.$": "$.object.key"
+#                "--bucket.$": "$.bucket.name"
+#            End: true
+          WhisperTranscribeLambdaFxn:
+            Type: Task
+            Resource: !GetAtt WhisperTranscribeFunction.Arn
+            End: True
+      Role: !GetAtt WorkflowExecRole.Arn
+      Tracing:
+        Enabled: true
+      Events:
+        S3Event:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: default
+            InputPath: $.detail
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - "Object Created"
+              detail:
+                bucket:
+                  name:
+                    - !Ref AudioFileBucket
+                object:
+                  key:
+                    - prefix: 'audio-files'
+
+Outputs:
+  WhisperETLStateMachine:
+    Value: !Ref WhisperETLStateMachine
+

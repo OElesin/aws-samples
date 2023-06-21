@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Create resources for a project that transcribes church sermons and indexes
+  text as embeddings into OpenSearch serverless
+Resources:
+  # Storage for the original media file, configured to send notifications to the EventBridge
+  TranscribeMediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bucket-${AWS::AccountId}-${AWS::Region}-church-sermons-media
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  # media bucket is configured to allow necessary access to the Transcribe and Step Functions services
+  TranscribeMediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Statement:
+          - Sid: TranscribeMediaReadPolicy
+            Effect: Allow
+            Principal:
+              Service: 'transcribe.amazonaws.com'
+            Action:
+              - s3:GetObject
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref TranscribeMediaBucket
+                - /*
+          - Sid: TranscribeMediaReadPolicy
+            Effect: Allow
+            Principal:
+              Service: 'states.amazonaws.com'
+            Action:
+              - s3:GetObject
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref TranscribeMediaBucket
+                - /*
+          - Sid: HttpsOnly
+            Action: s3:*
+            Effect: Deny
+            Principal: "*"
+            Resource:
+              - !Join [ '',[ 'arn:aws:s3:::',!Ref TranscribeMediaBucket,'/*' ] ]
+              - !Join [ '',[ 'arn:aws:s3:::',!Ref TranscribeMediaBucket ] ]
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+      Bucket: !Ref TranscribeMediaBucket
+
+  # Storage for the Transcribe job results
+  TranscribeResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bucket-${AWS::AccountId}-${AWS::Region}-church-sermons-results
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  TranscribeResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Version: 2012-10-17
+        Statement:
+          - Sid: TranscribeMediaWritePolicy
+            Effect: Allow
+            Principal:
+              Service: 'transcribe.amazonaws.com'
+            Action:
+              - s3:PutObject
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref TranscribeResultsBucket
+                - /*
+          - Sid: HttpsOnly
+            Action: s3:*
+            Effect: Deny
+            Principal: "*"
+            Resource:
+              - !Join ['',['arn:aws:s3:::',!Ref TranscribeResultsBucket,'/*']]
+              - !Join ['',['arn:aws:s3:::',!Ref TranscribeResultsBucket]]
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+      Bucket: !Ref TranscribeResultsBucket
+
+# Step Function to invoke Transcribe with an Event Bridge rule to trigger the execution when an upload is detected to the media bucket
+  ChurchSermonsTranscribeStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Events:
+        S3MediaTrigger:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: default
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - "Object Created"
+              detail:
+                bucket:
+                  name:
+                    - !Ref TranscribeMediaBucket
+      Definition:
+        Comment: Invoke Transcribe on a media file, when complete execute the results query Step Function and output the results
+        StartAt: StartTranscriptionJob
+        TimeoutSeconds: 900
+        States:
+          StartTranscriptionJob:
+            Type: Task
+            Comment: Start a transcribe job on the provided media file
+            Parameters:
+              Media:
+                MediaFileUri.$: States.Format('s3://{}/{}', $.detail.bucket.name, $.detail.object.key)
+              TranscriptionJobName.$: "$.detail.object.key"
+              IdentifyLanguage: true
+              OutputBucketName: !Ref TranscribeResultsBucket
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:aws-sdk:transcribe:startTranscriptionJob'
+            Next: Wait
+          Wait:
+            Type: Wait
+            Seconds: 60
+            Next: GetTranscriptionJob
+          GetTranscriptionJob:
+            Type: Task
+            Comment: Retrieve the status of an Amazon Transcribe job
+            Parameters:
+              TranscriptionJobName.$: "$.TranscriptionJob.TranscriptionJobName"
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:aws-sdk:transcribe:getTranscriptionJob'
+            Next: TranscriptionJobStatus
+          TranscriptionJobStatus:
+            Type: Choice
+            Choices:
+              - Variable: "$.TranscriptionJob.TranscriptionJobStatus"
+                StringEquals: COMPLETED
+                Next: Succeeded
+              - Variable: "$.TranscriptionJob.TranscriptionJobStatus"
+                StringEquals: FAILED
+                Next: Failed
+            Default: Wait
+          Failed:
+            Type: Fail
+            Cause: 'transcription job failed'
+            Error: FAILED
+          Succeeded:
+            Type: Succeed
+      Policies:
+        - S3ReadPolicy: {"BucketName": !Ref TranscribeMediaBucket}
+        - S3ReadPolicy: {"BucketName": !Ref TranscribeResultsBucket}
+        - S3WritePolicy: {"BucketName": !Ref TranscribeResultsBucket}
+        - CloudWatchPutMetricPolicy: {}
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: XrayAccessPolicy
+              Effect: Allow
+              Action:
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - xray:GetSamplingStatisticSummaries
+              Resource: '*'
+            - Sid: TranscribeJobPolicy
+              Effect: Allow
+              Action:
+                - transcribe:GetTranscriptionJob
+                - transcribe:StartTranscriptionJob
+              Resource: '*'
+
+# Amazon OpenSearch Serverless: TODO
+
+Outputs:
+  TranscribeMediaBucket:
+    Value: !Ref TranscribeMediaBucket
+    Description: 'bucket to store media inputs'
+
+  TranscribeResultsBucket:
+    Value: !Ref TranscribeResultsBucket
+    Description: 'Buckets to store transcribe outputs'
