@@ -189,7 +189,117 @@ Resources:
                 - transcribe:StartTranscriptionJob
               Resource: '*'
 
-# Amazon OpenSearch Serverless: TODO
+  MyLLMAppBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'my-llm-apprunner-build-role'
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+
+  MyLLMAppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'my-llm-apprunner-role'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: sagemaker-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowSageMakerInvoke
+                Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpoint
+                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*"
+
+  OpenSearchDomainCredentials:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: OpenSearchDomainSecret
+      Description: "This secret has a dynamically generated secret password."
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "llm-user"}'
+        GenerateStringKey: "password"
+        PasswordLength: 30
+        ExcludeCharacters: '"@/\'
+
+  OpenSearchServiceDomain:
+    DependsOn:
+      - OpenSearchDomainCredentials
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+      AccessPolicies:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 'es:*'
+            Resource: !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/*/*
+      EngineVersion: 'OpenSearch_2.5'
+      ClusterConfig:
+        InstanceType: "r6g.xlarge.search"
+      EBSOptions:
+        EBSEnabled: True
+        VolumeSize: 20
+        VolumeType: 'gp3'
+      AdvancedSecurityOptions:
+        AnonymousAuthEnabled: False
+        Enabled: True
+        InternalUserDatabaseEnabled: True
+        MasterUserOptions:
+          MasterUserName: '{{resolve:secretsmanager:OpenSearchDomainSecret:SecretString:username}}'
+          MasterUserPassword: '{{resolve:secretsmanager:OpenSearchDomainSecret:SecretString:password}}'
+      NodeToNodeEncryptionOptions:
+        Enabled: True
+      EncryptionAtRestOptions:
+        Enabled: True
+        KmsKeyId: alias/aws/es
+      DomainEndpointOptions:
+        EnforceHTTPS: True
+
+  MyLLMAppRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: 'llm-app-repo'
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowPushPull
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt MyLLMAppBuildRole.Arn
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+
 
 Outputs:
   TranscribeMediaBucket:
@@ -199,3 +309,10 @@ Outputs:
   TranscribeResultsBucket:
     Value: !Ref TranscribeResultsBucket
     Description: 'Buckets to store transcribe outputs'
+
+  OpenSearchDomainEndpoint:
+    Description: OpenSearch domain endpoint
+    Value:
+      'Fn::GetAtt':
+        - OpenSearchServiceDomain
+        - DomainEndpoint
