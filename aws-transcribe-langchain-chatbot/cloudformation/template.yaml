@@ -3,6 +3,16 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   Create resources for a project that transcribes church sermons and indexes
   text as embeddings into OpenSearch serverless
+Parameters:
+  AppName:
+    Default: llm-apps-blog
+    Type: String
+    AllowedValues: [ llm-apps-blog ]
+    Description: Name of the overall application, this is used while creating the ML model endpoint.
+  OpenSearchIndexName:
+    Default: llm_apps_embeddings
+    Type: String
+    Description: Name of the OpenSearch index for storing embeddings.
 Resources:
   # Storage for the original media file, configured to send notifications to the EventBridge
   TranscribeMediaBucket:
@@ -205,7 +215,6 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
 
-
   MyLLMAppInstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -300,6 +309,135 @@ Resources:
               - ecr:UploadLayerPart
               - ecr:CompleteLayerUpload
 
+# SageMaker stuff below
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LLMAppsBlogIAMRole
+      Policies:
+        - PolicyName: CustomNotebookAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: ReadFromOpenSearch
+                Effect: Allow
+                Action:
+                  - "es:ESHttp*"
+                Resource:
+                  - !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/*
+              - Sid: ReadSecretFromSecretsManager
+                Effect: Allow
+                Action:
+                  - "secretsmanager:GetSecretValue"
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*"
+              - Sid: ReadWriteFromECR
+                Effect: Allow
+                Action:
+                  - "ecr:BatchGetImage"
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:CompleteLayerUpload"
+                  - "ecr:DescribeImages"
+                  - "ecr:DescribeRepositories"
+                  - "ecr:GetDownloadUrlForLayer"
+                  - "ecr:InitiateLayerUpload"
+                  - "ecr:ListImages"
+                  - "ecr:PutImage"
+                  - "ecr:UploadLayerPart"
+                  - "ecr:CreateRepository"
+                  - "ecr:GetAuthorizationToken"
+                  - "ec2:DescribeAvailabilityZones"
+                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess
+        - arn:aws:iam::aws:policy/TranslateReadOnly
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+
+  LLMEndpoint:
+    Type: "AWS::SageMaker::Endpoint"
+    Properties:
+      EndpointName: !Sub
+        - '${AppName}-flan-t5-xxl-endpoint-${RandomGUID}'
+        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
+      EndpointConfigName: !GetAtt LLMEndpointConfig.EndpointConfigName
+
+  LLMEndpointConfig:
+    Type: "AWS::SageMaker::EndpointConfig"
+    Properties:
+      EndpointConfigName: !Sub
+        - '${AppName}-flan-t5-xxl-endpoint-${RandomGUID}'
+        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
+      ProductionVariants:
+        - InitialInstanceCount: 1
+          InitialVariantWeight: 1.0
+          InstanceType: "ml.g5.12xlarge"
+          ModelName: !GetAtt LLMModel.ModelName
+          VariantName: !GetAtt LLMModel.ModelName
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W1200
+            reason: Solution does not have KMS encryption enabled by default
+
+  LLMModel:
+    Type: "AWS::SageMaker::Model"
+    Properties:
+      ModelName: !Sub
+        - '${AppName}-flan-t5-xxl-model-${RandomGUID}'
+        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
+      PrimaryContainer:
+        ModelDataUrl: !Sub "s3://jumpstart-cache-prod-${AWS::Region}/huggingface-infer/prepack/v1.0.1/infer-prepack-huggingface-text2text-flan-t5-xxl.tar.gz"
+        Image: !Sub "763104351884.dkr.ecr.${AWS::Region}.amazonaws.com/pytorch-inference:1.12.0-gpu-py38"
+        Environment: {"TS_DEFAULT_WORKERS_PER_MODEL": "1"}
+        Mode: "SingleModel"
+      ExecutionRoleArn: !GetAtt Role.Arn
+
+  EmbeddingEndpoint:
+    Type: "AWS::SageMaker::Endpoint"
+    Properties:
+      EndpointName: !Sub
+        - '${AppName}-gpt-j-6b-endpoint-${RandomGUID}'
+        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
+      EndpointConfigName: !GetAtt EmbeddingEndpointConfig.EndpointConfigName
+
+  EmbeddingEndpointConfig:
+    Type: "AWS::SageMaker::EndpointConfig"
+    Properties:
+      EndpointConfigName: !Sub
+        - '${AppName}-gpt-j-6b-endppoint-${RandomGUID}'
+        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
+      ProductionVariants:
+        - InitialInstanceCount: 1
+          InitialVariantWeight: 1.0
+          InstanceType: "ml.g5.2xlarge"
+          ModelName: !GetAtt EmbeddingModel.ModelName
+          VariantName: !GetAtt EmbeddingModel.ModelName
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W1200
+            reason: Solution does not have KMS encryption enabled by default
+
+  EmbeddingModel:
+    Type: "AWS::SageMaker::Model"
+    Properties:
+      ModelName: !Sub
+        - '${AppName}-gpt-j-6b-model-${RandomGUID}'
+        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
+      PrimaryContainer:
+        ModelDataUrl: !Sub "s3://jumpstart-cache-prod-${AWS::Region}/huggingface-infer/prepack/v1.0.0/infer-prepack-huggingface-textembedding-gpt-j-6b.tar.gz"
+        Image: !Sub "763104351884.dkr.ecr.${AWS::Region}.amazonaws.com/pytorch-inference:1.12.0-gpu-py38"
+        Environment: {"TS_DEFAULT_WORKERS_PER_MODEL": "2"}
+        Mode: "SingleModel"
+      ExecutionRoleArn: !GetAtt Role.Arn
 
 Outputs:
   TranscribeMediaBucket:
@@ -309,6 +447,10 @@ Outputs:
   TranscribeResultsBucket:
     Value: !Ref TranscribeResultsBucket
     Description: 'Buckets to store transcribe outputs'
+
+  LLMAppEcrRepo:
+    Value: !Sub "${MyLLMAppRepository.RepositoryUri}:latest"
+    Description: 'ECR Repo to host docker images'
 
   OpenSearchDomainEndpoint:
     Description: OpenSearch domain endpoint
