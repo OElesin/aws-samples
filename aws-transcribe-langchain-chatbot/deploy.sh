@@ -24,7 +24,7 @@ docker push "${IMAGE_URI}"
 
 echo "Deploying app stack"
 
-#aws cloudformation deploy --template-file ./cloudformation/apprunner.template.yaml --stack-name "${APP_STACK_NAME}" \
-#  --capabilities CAPABILITY_NAMED_IAM \
-#  --no-fail-on-empty-changeset
+aws cloudformation deploy --template-file ./cloudformation/apprunner.template.yaml --stack-name "${APP_STACK_NAME}" \
+ --capabilities CAPABILITY_NAMED_IAM \
+ --no-fail-on-empty-changeset
 
