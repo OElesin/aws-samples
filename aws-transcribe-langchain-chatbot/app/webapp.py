@@ -17,7 +17,7 @@ parameters = {
 
 if __name__ == "__main__":
     logger.debug("Launching Gradio App")
-    with gr.Blocks(css="footer {visibility: hidden}") as demo:
+    with gr.Blocks(css="footer {visibility: hidden}", title="Pastor Poju bot parody") as demo:
         gr.Markdown("# 👩‍💻 Pastor Poju Oyemade virtual assistant (parody)")
         gr.Markdown("### Powered by [Covenant Nation messages](https://elibrary.insightsforliving.org/) and [Amazon Transribe](https://aws.amazon.com/transcribe/) for context,  and [ChatGPT](https://platform.openai.com/docs/api-reference), [LangChain](https://python.langchain.com/docs/get_started/introduction.html) Generative AI. App is hosted on AWS")
         gr.Markdown("This chatbot does not represent the Pastor Poju in anyway.")
