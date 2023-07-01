@@ -1,0 +1,10 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "summarizer-api-sagemaker"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-j2f7b94fv7ky"
+s3_prefix = "summarizer-api-sagemaker"
+region = "eu-west-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"

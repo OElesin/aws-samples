@@ -215,32 +215,6 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
 
-  MyLLMAppInstanceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: 'my-llm-apprunner-role'
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: tasks.apprunner.amazonaws.com
-            Action: 'sts:AssumeRole'
-      Path: '/'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
-        - arn:aws:iam::aws:policy/CloudWatchFullAccess
-        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
-      Policies:
-        - PolicyName: sagemaker-access
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Sid: AllowSageMakerInvoke
-                Effect: Allow
-                Action:
-                  - sagemaker:InvokeEndpoint
-                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*"
 
   OpenSearchDomainCredentials:
     Type: 'AWS::SecretsManager::Secret'
@@ -252,41 +226,6 @@ Resources:
         GenerateStringKey: "password"
         PasswordLength: 30
         ExcludeCharacters: '"@/\'
-
-  OpenSearchServiceDomain:
-    DependsOn:
-      - OpenSearchDomainCredentials
-    Type: AWS::OpenSearchService::Domain
-    Properties:
-      AccessPolicies:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: '*'
-            Action: 'es:*'
-            Resource: !Sub arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/*/*
-      EngineVersion: 'OpenSearch_2.5'
-      ClusterConfig:
-        InstanceType: "r6g.xlarge.search"
-      EBSOptions:
-        EBSEnabled: True
-        VolumeSize: 20
-        VolumeType: 'gp3'
-      AdvancedSecurityOptions:
-        AnonymousAuthEnabled: False
-        Enabled: True
-        InternalUserDatabaseEnabled: True
-        MasterUserOptions:
-          MasterUserName: '{{resolve:secretsmanager:OpenSearchDomainSecret:SecretString:username}}'
-          MasterUserPassword: '{{resolve:secretsmanager:OpenSearchDomainSecret:SecretString:password}}'
-      NodeToNodeEncryptionOptions:
-        Enabled: True
-      EncryptionAtRestOptions:
-        Enabled: True
-        KmsKeyId: alias/aws/es
-      DomainEndpointOptions:
-        EnforceHTTPS: True
 
   MyLLMAppRepository:
     Type: AWS::ECR::Repository
@@ -361,14 +300,6 @@ Resources:
             Action:
               - 'sts:AssumeRole'
 
-  LLMEndpoint:
-    Type: "AWS::SageMaker::Endpoint"
-    Properties:
-      EndpointName: !Sub
-        - '${AppName}-flan-t5-xxl-endpoint-${RandomGUID}'
-        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
-      EndpointConfigName: !GetAtt LLMEndpointConfig.EndpointConfigName
-
   LLMEndpointConfig:
     Type: "AWS::SageMaker::EndpointConfig"
     Properties:
@@ -399,14 +330,6 @@ Resources:
         Environment: {"TS_DEFAULT_WORKERS_PER_MODEL": "1"}
         Mode: "SingleModel"
       ExecutionRoleArn: !GetAtt Role.Arn
-
-  EmbeddingEndpoint:
-    Type: "AWS::SageMaker::Endpoint"
-    Properties:
-      EndpointName: !Sub
-        - '${AppName}-gpt-j-6b-endpoint-${RandomGUID}'
-        - { RandomGUID: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId ]]]] }
-      EndpointConfigName: !GetAtt EmbeddingEndpointConfig.EndpointConfigName
 
   EmbeddingEndpointConfig:
     Type: "AWS::SageMaker::EndpointConfig"
@@ -451,10 +374,23 @@ Outputs:
   LLMAppEcrRepo:
     Value: !Sub "${MyLLMAppRepository.RepositoryUri}:latest"
     Description: 'ECR Repo to host docker images'
+    Export:
+      Name: llm-app-ecr-repo
 
-  OpenSearchDomainEndpoint:
-    Description: OpenSearch domain endpoint
-    Value:
-      'Fn::GetAtt':
-        - OpenSearchServiceDomain
-        - DomainEndpoint
+  LLMAppBuildRole:
+    Value: !GetAtt MyLLMAppBuildRole.Arn
+    Description: 'LLM AppRunner build role'
+    Export:
+      Name: llm-app-build-iam-role
+
+  EmbeddingEndpointConfig:
+    Description: SageMaker Embedding Model Endpoint Config
+    Value: !GetAtt EmbeddingEndpointConfig.EndpointConfigName
+    Export:
+      Name: llm-app-sm-embedding-endpoint-config
+
+  LLMEndpointConfig:
+    Description: SageMaker LLM Model Endpoint Config
+    Value: !GetAtt LLMEndpointConfig.EndpointConfigName
+    Export:
+      Name: llm-app-sm-text2text-endpoint-config

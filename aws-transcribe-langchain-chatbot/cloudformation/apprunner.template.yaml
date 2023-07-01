@@ -1,7 +1,77 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description:
+Description: >
+  Create resources to run LLM chat app in AWS AppRunner
+
+Parameters:
+  AppName:
+    Default: llm-apps-blog
+    Type: String
+    AllowedValues: [ llm-apps-blog ]
+    Description: Name of the overall application, this is used while creating the ML model endpoint.
+  OpenSearchIndexName:
+    Default: llm_apps_embeddings
+    Type: String
+    Description: Name of the OpenSearch index for storing embeddings.
+
 Resources:
-  DummyServer:
-    Type: "AWS::EC2::Instance"
+  MyLLMAppInstanceRole:
+    Type: AWS::IAM::Role
     Properties:
-      ImageId: ""
+      RoleName: 'my-llm-apprunner-role'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: sagemaker-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowSageMakerInvoke
+                Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpoint
+                Resource: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*"
+
+  ChatbotLLMApp:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: demo-llm-service
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          AccessRoleArn: !ImportValue llm-app-build-iam-role
+        AutoDeploymentsEnabled: false
+        ImageRepository:
+          ImageIdentifier: !ImportValue llm-app-ecr-repo
+          ImageRepositoryType: ECR
+          ImageConfiguration:
+            Port: 8080
+            RuntimeEnvironmentVariables:
+              - Name: TZ
+                Value: Europe/Berlin
+              - Name: PUID
+                Value: 1000
+              - Name: TEXT2TEXT_ENDPOINT_NAME
+                Value: ''
+              - Name: EMBEDDING_ENDPOINT_NAME
+                Value: ''
+              - Name: OPENSEARCH_SECRET_USERNAME
+                Value: '{{resolve:secretsmanager:OpenSearchDomainSecret:SecretString:username}}'
+              - Name: OPENSEARCH_SECRET_PASSWORD
+                Value: '{{resolve:secretsmanager:OpenSearchDomainSecret:SecretString:password}}'
+              - Name: OPENSEARCH_INDEX
+                Value: !Ref OpenSearchIndexName
+              - Name: APP_NAME
+                Value: !Ref AppName
+      InstanceConfiguration:
+        Cpu: 4 vCPU
+        Memory: 12 GB
+        InstanceRoleArn: !GetAtt MyLLMAppInstanceRole.Arn
