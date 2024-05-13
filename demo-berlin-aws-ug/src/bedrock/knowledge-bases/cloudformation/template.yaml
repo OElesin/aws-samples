@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Creates an Amazon Bedrock knowledge base connected to an OpenSearch Serverless vector store"
+
+Parameters:
+  KnowledgeBaseName:
+    Type: String
+    Description: The name of the Bedrock knowledge base
+    Default: demo-bedrock-kb-aws-sg
+
+  KnowledgeBaseDescription:
+    Type: String
+    Description: The description of the Bedrock knowledge base
+    Default: Demo Bedrock knowledge base for GitHub repositories
+
+  DataSourceName:
+    Type: String
+    Description: The name of the data source.
+    Default: demo-bedrock-kb-aws-sg
+
+  DataSourceDescription:
+    Type: String
+    Description: The description of the data source.  
+    Default: Demo data source for GitHub repositories
+
+Resources:
+  EncryptionPolicy:
+    Type: 'AWS::OpenSearchServerless::SecurityPolicy'
+    Properties:
+      Name: bedrock-kb-encryption-policy
+      Type: encryption
+      Description: Encryption policy for test collection
+      Policy: >-
+        {"Rules":[{"ResourceType":"collection","Resource":["collection/bedrock-kb-collection"]}],"AWSOwnedKey":true}
+  
+  BedrockKBAccessPolicy:
+    Type: 'AWS::OpenSearchServerless::AccessPolicy'
+    Properties:
+      Name: bedrock-kb-access-policy
+      Type: data
+      Description: Access policy for my-collection
+      Policy:
+        !Sub >-
+         [{"Description":"Access for
+         test-user","Rules":[{"ResourceType":"index","Resource":["index/*/*"],"Permission":["aoss:*"]},
+         {"ResourceType":"collection","Resource":["collection/bedrock-kb-collection"],"Permission":["aoss:*"]}],
+         "Principal":["${BedrockKnowledgeServiceRole.Arn}"]}]
+
+  OpenSearchServerlessCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    DependsOn: EncryptionPolicy
+    Properties:
+      Name: bedrock-kb-collection
+      Type: VECTORSEARCH
+      Description: Demo collection to store GitHub repositories
+
+  BedrockKnowledgeServiceRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "Bedrock-KB-ServiceRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: 
+                - "bedrock.amazonaws.com"
+            Action: "sts:AssumeRole"
+            Condition: 
+              StringEquals: 
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike: 
+                "AWS:SourceArn": !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/*"
+      Policies:
+        - PolicyName: Bedrock-KB-ServicePolicy
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - bedrock:ListFoundationModels
+                  - bedrock:ListCustomModels
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "bedrock:InvokeModel"
+                Resource: 
+                  - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v1
+                  - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/cohere.embed-english-v3
+                  - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/cohere.embed-multilingual-v3
+              - Effect: "Allow"
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource: 
+                  - arn:aws:s3:::swb-artifactcs
+                  - arn:aws:s3:::swb-artifactcs/*
+                Condition:
+                  StringEquals:
+                    "aws:PrincipalAccount": !Ref AWS::AccountId
+              - Effect: "Allow"
+                Action: 
+                  - aoss:APIAccessAll
+                Resource: !GetAtt OpenSearchServerlessCollection.Arn
+
+  BedrockKnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: !Ref KnowledgeBaseName
+      Description: !Ref KnowledgeBaseDescription
+      RoleArn: !GetAtt BedrockKnowledgeServiceRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v1"
+      StorageConfiguration:
+        Type: OPENSEARCH_SERVERLESS
+        OpensearchServerlessConfiguration:
+          CollectionArn: !GetAtt OpenSearchServerlessCollection.Arn
+          VectorIndexName: "bedrock-index"
+          FieldMapping:
+            VectorField: "embeddings"
+            TextField: "text"
+            MetadataField: "metadata"   
+
+  BedrockDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      KnowledgeBaseId: !Ref BedrockKnowledgeBase
+      Name: !Ref DataSourceName
+      Description: !Ref DataSourceDescription
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: "arn:aws:s3:::swb-artifactcs"
+          InclusionPrefixes: ["github-repositories/"]                         
+
+Outputs:
+  OpenSearchServerlessCollectionEp:
+    Description: The endpoint of the OpenSearch Serverless collection
+    Value: !GetAtt OpenSearchServerlessCollection.CollectionEndpoint
+
+  OpenSearchServerlessDashboardEp:
+    Description: The endpoint of the OpenSearch Serverless dashboard
+    Value: !GetAtt OpenSearchServerlessCollection.DashboardEndpoint
+
+  KnowledgeBaseId:
+    Description: The ID of the Bedrock knowledge base
+    Value: !Ref BedrockKnowledgeBase
+
+  BedrockDataSource:
+    Description: The ID of the Bedrock vector store
+    Value: !Ref BedrockDataSource    
