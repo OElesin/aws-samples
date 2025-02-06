@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Create resources for a project that transcribes church sermons and indexes
+  text as embeddings into OpenSearch serverless
+Resources:
+  MyLLMAppRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: 'bedrock-apprunner-api-repo'
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowPushPull
+            Effect: Allow
+            Principal:
+              AWS:
+                - !ImportValue llm-app-build-iam-role
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+
+Outputs:
+  BedrockApiAppEcrRepo:
+    Value: !Sub "${MyLLMAppRepository.RepositoryUri}:latest"
+    Description: 'ECR Repo to host docker images'

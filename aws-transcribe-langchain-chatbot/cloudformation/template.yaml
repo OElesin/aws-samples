@@ -144,9 +144,10 @@ Resources:
             Parameters:
               Media:
                 MediaFileUri.$: States.Format('s3://{}/{}', $.detail.bucket.name, $.detail.object.key)
-              TranscriptionJobName.$: "$.detail.object.key"
+              TranscriptionJobName.$: States.Hash($.detail.object.key, 'SHA-256')
               IdentifyLanguage: true
               OutputBucketName: !Ref TranscribeResultsBucket
+              OutputKey.$: States.Format('{}/{}.json', States.ArrayGetItem(States.StringSplit($.detail.object.key, '/'), 0), States.Hash($.detail.object.key, 'SHA-256'))
             Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:aws-sdk:transcribe:startTranscriptionJob'
             Next: Wait
           Wait:

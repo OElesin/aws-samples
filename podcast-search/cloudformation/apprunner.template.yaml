@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Create resources to run Bedrock API in AWS AppRunner
+
+Parameters:
+  AppName:
+    Default: search-cohere-rerank-app
+    Type: String
+    AllowedValues: [ search-cohere-rerank-app ]
+  ImageUri:
+    Type: String
+    Description: 'Docker Image ECR Uri'
+
+Resources:
+  MyLLMAppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'search-cohere-rerank-app-role'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: sagemaker-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadSecretFromSecretsManager
+                Effect: Allow
+                Action:
+                  - "secretsmanager:GetSecretValue"
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*"
+              - Sid: BedrockAccess
+                Effect: Allow
+                Action: 
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:InvokeAgent
+                  - bedrock:Rerank
+                  - bedrock:ListFoundationModels
+                  - bedrock:ListModelCustomizationJobs
+                  - bedrock:ListAgents
+                  - bedrock:ListProvisionedModelThroughputs
+                  - bedrock:ListCustomModels
+                  - bedrock:ListKnowledgeBases
+                  - bedrock:ListFoundationModelAgreementOffers
+                Resource: "*"
+
+  BedrockApiApp:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: search-cohere-rerank-app
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          AccessRoleArn: !ImportValue llm-app-build-iam-role
+        AutoDeploymentsEnabled: false
+        ImageRepository:
+          ImageIdentifier: !Ref ImageUri
+          ImageRepositoryType: ECR
+          ImageConfiguration:
+            Port: 8000
+            RuntimeEnvironmentVariables:
+              - Name: TZ
+                Value: Europe/Berlin
+              - Name: PUID
+                Value: 1000
+              - Name: APP_NAME
+                Value: !Ref AppName
+      InstanceConfiguration:
+        Cpu: 4 vCPU
+        Memory: 8 GB
+        InstanceRoleArn: !GetAtt MyLLMAppInstanceRole.Arn
