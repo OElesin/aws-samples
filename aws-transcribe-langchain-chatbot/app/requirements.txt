@@ -1,6 +1,0 @@
-boto3
-langchain
-gradio
-tiktoken
-openai
-faiss-cpu
